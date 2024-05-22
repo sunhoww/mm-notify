@@ -50,7 +50,7 @@ def get_notice() -> str:
             for n in soup.find_all(class_="notice-board"):
                 msg.append("\n".join([x for x in n.stripped_strings]))
         except requests.exceptions.ConnectTimeout:
-            logger.warn("Connection timed out.")
+            logger.warning("Connection timed out.")
         finally:
             return "\n\n".join(msg)
 
