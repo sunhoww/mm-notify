@@ -10,7 +10,9 @@ MM_PASSWORD = os.getenv("MM_PASSWORD")
 HA_ENDPOINT = os.getenv("HA_ENDPOINT", "")
 HA_TOKEN = os.getenv("HA_TOKEN")
 
-USER_AGENT = "mm-notify/0.1"
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; mm_notify/0.1; +https://github.com/sunhoww/mm_notify)"
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
