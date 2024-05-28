@@ -77,7 +77,7 @@ def update_ha(msgs: List[str]) -> None:
             "target": {"entity_id": HA_TODO_ID},
         }
         ws.send(json.dumps(_req))
-        todos = [
+        h_descriptions = [
             hash(x.get("description"))
             for x in json.loads(ws.recv())
             .get("result", {})
@@ -89,7 +89,7 @@ def update_ha(msgs: List[str]) -> None:
         for msg in msgs:
             item = msg.split("\n")[0]
             description = "\n".join(msg.split("\n")[1:])
-            if hash(description) not in todos:
+            if hash(description) not in h_descriptions:
                 id += 1
                 _req = {
                     "id": id,
