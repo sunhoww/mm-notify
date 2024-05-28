@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+from typing import List
 import requests
 from bs4 import BeautifulSoup
 
@@ -24,9 +25,9 @@ logging.basicConfig(
 )
 
 
-def get_notice() -> str:
+def get_notice() -> List[str]:
     with requests.Session() as s:
-        msg = []
+        msgs = []
         try:
             headers = {"User-Agent": USER_AGENT}
             s.post(
@@ -49,16 +50,15 @@ def get_notice() -> str:
             if soup.find(string=lambda x: "No Notice Found!" in x):
                 logger.info("No Notice Found!")
 
-            msg = []
             for n in soup.find_all(class_="notice-board"):
-                msg.append("\n".join([x for x in n.stripped_strings]))
+                msgs.append("\n".join([x for x in n.stripped_strings]))
         except requests.exceptions.ConnectTimeout:
             logger.warning("Connection timed out.")
         finally:
-            return "\n\n".join(msg)
+            return msgs
 
 
-def update_ha(msg: str) -> None:
+def update_ha(msgs: List[str]) -> None:
     if not (HA_NOTICE_ID and HA_TODO_ID):
         raise Exception("Required env not found")
 
@@ -69,7 +69,7 @@ def update_ha(msg: str) -> None:
     }
     notice_ep = f"{HA_BASE_URL}/api/states/{HA_NOTICE_ID}"
     todo_ep = f"{HA_BASE_URL}/api/services/todo/add_item"
-    h_msg = hashlib.shake_128(msg.encode()).hexdigest(16)
+    h_msg = hashlib.shake_128("\n\n".join(msgs).encode()).hexdigest(16)
 
     r = requests.get(notice_ep, headers=headers)
     prev_state = r.json().get("state")
@@ -78,31 +78,35 @@ def update_ha(msg: str) -> None:
         logger.info("Not updating ha.")
         return
 
-    item = msg.split("\n")[0]
-    description = "\n".join(msg.split("\n")[1:])
-    r = requests.post(
-        todo_ep,
-        headers=headers,
-        json={
-            "entity_id": HA_TODO_ID,
-            "item": item,
-            "description": description,
-        },
-    )
-    if not r.ok:
-        logger.warn("Unable to add item.")
-        return
+    for msg in msgs:
+        item = msg.split("\n")[0]
+        description = "\n".join(msg.split("\n")[1:])
+        r = requests.post(
+            todo_ep,
+            headers=headers,
+            json={
+                "entity_id": HA_TODO_ID,
+                "item": item,
+                "description": description,
+            },
+        )
+        if r.ok:
+            logger.info(f"Added - {item}")
+        else:
+            logger.warn("Unable to add item.")
 
     requests.post(notice_ep, headers=headers, json={"state": h_msg})
     logger.info("Updated ha state.")
 
 
 def main():
-    msg = get_notice()
-    if not msg:
+    msgs = get_notice()
+    if not msgs:
         return
 
-    update_ha(msg)
+    print(msgs)
+
+    # update_ha(msgs)
 
 
 if __name__ == "__main__":
