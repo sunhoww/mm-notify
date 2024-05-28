@@ -104,9 +104,7 @@ def main():
     if not msgs:
         return
 
-    print(msgs)
-
-    # update_ha(msgs)
+    update_ha(msgs)
 
 
 if __name__ == "__main__":
