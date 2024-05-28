@@ -1,16 +1,16 @@
-import hashlib
+import json
 import logging
 import os
 from typing import List
 import requests
 from bs4 import BeautifulSoup
+from websockets.sync.client import connect
 
 MM_BASE_URL = "https://www.school.mariamanipur.in"
 MM_USERNAME = os.getenv("MM_USERNAME")
 MM_PASSWORD = os.getenv("MM_PASSWORD")
 
-HA_BASE_URL = os.getenv("HA_BASE_URL", "")
-HA_NOTICE_ID = os.getenv("HA_NOTICE_ID")
+HA_WS_ENDPOINT = os.getenv("HA_WS_ENDPOINT", "")
 HA_TODO_ID = os.getenv("HA_TODO_ID")
 HA_TOKEN = os.getenv("HA_TOKEN")
 
@@ -59,44 +59,54 @@ def get_notice() -> List[str]:
 
 
 def update_ha(msgs: List[str]) -> None:
-    if not (HA_NOTICE_ID and HA_TODO_ID):
-        raise Exception("Required env not found")
+    with connect(HA_WS_ENDPOINT) as ws:
+        id = 1
+        _req = {
+            "type": "auth",
+            "access_token": HA_TOKEN,
+        }
+        ws.send(json.dumps(_req))
+        ws.recv()
+        ws.recv()
+        _req = {
+            "id": id,
+            "return_response": True,
+            "type": "call_service",
+            "domain": "todo",
+            "service": "get_items",
+            "target": {"entity_id": HA_TODO_ID},
+        }
+        ws.send(json.dumps(_req))
+        todos = [
+            hash(x.get("description"))
+            for x in json.loads(ws.recv())
+            .get("result", {})
+            .get("response", {})
+            .get(HA_TODO_ID, {})
+            .get("items", [])
+        ]
 
-    headers = {
-        "Authorization": f"Bearer {HA_TOKEN}",
-        "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
-    }
-    notice_ep = f"{HA_BASE_URL}/api/states/{HA_NOTICE_ID}"
-    todo_ep = f"{HA_BASE_URL}/api/services/todo/add_item"
-    h_msg = hashlib.shake_128("\n\n".join(msgs).encode()).hexdigest(16)
+        for msg in msgs:
+            item = msg.split("\n")[0]
+            description = "\n".join(msg.split("\n")[1:])
+            if hash(description) not in todos:
+                id += 1
+                _req = {
+                    "id": id,
+                    "type": "call_service",
+                    "domain": "todo",
+                    "service": "add_item",
+                    "target": {"entity_id": HA_TODO_ID},
+                    "service_data": {"item": item, "description": description},
+                }
+                ws.send(json.dumps(_req))
 
-    r = requests.get(notice_ep, headers=headers)
-    prev_state = r.json().get("state")
-
-    if prev_state == h_msg:
-        logger.info("Not updating ha.")
-        return
-
-    for msg in msgs:
-        item = msg.split("\n")[0]
-        description = "\n".join(msg.split("\n")[1:])
-        r = requests.post(
-            todo_ep,
-            headers=headers,
-            json={
-                "entity_id": HA_TODO_ID,
-                "item": item,
-                "description": description,
-            },
-        )
-        if r.ok:
-            logger.info(f"Added - {item}")
-        else:
-            logger.warn("Unable to add item.")
-
-    requests.post(notice_ep, headers=headers, json={"state": h_msg})
-    logger.info("Updated ha state.")
+                if json.loads(ws.recv()).get("success", False):
+                    logger.info("Added item.")
+                else:
+                    logger.warn("Failed to add item.")
+            else:
+                logger.info("Item already exists. Not adding.")
 
 
 def main():
