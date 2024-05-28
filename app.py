@@ -15,7 +15,7 @@ HA_TODO_ID = os.getenv("HA_TODO_ID")
 HA_TOKEN = os.getenv("HA_TOKEN")
 
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; mm_notify/0.1; +https://github.com/sunhoww/mm_notify)"
+    "Mozilla/5.0 (compatible; mm_notify/0.2; +https://github.com/sunhoww/mm_notify)"
 )
 
 logger = logging.getLogger(__name__)
