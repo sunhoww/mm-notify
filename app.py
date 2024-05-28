@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import requests
@@ -7,7 +8,9 @@ MM_BASE_URL = "https://www.school.mariamanipur.in"
 MM_USERNAME = os.getenv("MM_USERNAME")
 MM_PASSWORD = os.getenv("MM_PASSWORD")
 
-HA_ENDPOINT = os.getenv("HA_ENDPOINT", "")
+HA_BASE_URL = os.getenv("HA_BASE_URL", "")
+HA_NOTICE_ID = os.getenv("HA_NOTICE_ID")
+HA_TODO_ID = os.getenv("HA_TODO_ID")
 HA_TOKEN = os.getenv("HA_TOKEN")
 
 USER_AGENT = (
@@ -55,21 +58,42 @@ def get_notice() -> str:
             return "\n\n".join(msg)
 
 
-def update_ha(msg):
+def update_ha(msg: str) -> None:
+    if not (HA_NOTICE_ID and HA_TODO_ID):
+        raise Exception("Required env not found")
+
     headers = {
         "Authorization": f"Bearer {HA_TOKEN}",
         "Content-Type": "application/json",
         "User-Agent": USER_AGENT,
     }
-    r = requests.get(HA_ENDPOINT, headers=headers)
+    notice_ep = f"{HA_BASE_URL}/api/states/{HA_NOTICE_ID}"
+    todo_ep = f"{HA_BASE_URL}/api/services/todo/add_item"
+    h_msg = hashlib.shake_128(msg.encode()).hexdigest(16)
+
+    r = requests.get(notice_ep, headers=headers)
     prev_state = r.json().get("state")
 
-    if prev_state == msg:
+    if prev_state == h_msg:
         logger.info("Not updating ha.")
         return
 
-    payload = {"state": msg}
-    requests.post(HA_ENDPOINT, headers=headers, json=payload)
+    item = msg.split("\n")[0]
+    description = "\n".join(msg.split("\n")[1:])
+    r = requests.post(
+        todo_ep,
+        headers=headers,
+        json={
+            "entity_id": HA_TODO_ID,
+            "item": item,
+            "description": description,
+        },
+    )
+    if not r.ok:
+        logger.warn("Unable to add item.")
+        return
+
+    requests.post(notice_ep, headers=headers, json={"state": h_msg})
     logger.info("Updated ha state.")
 
 
