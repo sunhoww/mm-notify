@@ -1,9 +1,10 @@
 import json
 import logging
 import os
-from typing import List
+import re
+from typing import cast, List
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from websockets.sync.client import connect
 
 MM_BASE_URL = "https://www.school.mariamanipur.in"
@@ -15,7 +16,7 @@ HA_TODO_ID = os.getenv("HA_TODO_ID")
 HA_TOKEN = os.getenv("HA_TOKEN")
 
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; mm_notify/0.2; +https://github.com/sunhoww/mm_notify)"
+    "Mozilla/5.0 (compatible; mm_notify/0.3; +https://github.com/sunhoww/mm_notify)"
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,32 @@ def get_notice() -> List[str]:
 
             for n in soup.find_all(class_="notice-board"):
                 msgs.append("\n".join([x for x in n.stripped_strings]))
+
+            r = s.get(
+                f"{MM_BASE_URL}/myportal/lessons",
+                timeout=10,
+                headers=headers,
+            )
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.find_all(href=re.compile("viewclass")):
+                lesson = []
+                l_r = s.get(a["href"], timeout=10, headers=headers)
+                l_soup = BeautifulSoup(l_r.text, "html.parser")
+                desc = cast(Tag, l_soup.find(class_="lesson-desc"))
+                desc = cast(
+                    Tag, desc.find_parent(class_="text-center")
+                ).stripped_strings
+                aside = cast(
+                    Tag, l_soup.find(class_="success-msg-box")
+                ).stripped_strings
+
+                lesson = list(desc) + list(aside)
+                if lesson:
+                    lesson.append(a["href"])
+                    msgs.append("\n".join(lesson))
+                else:
+                    logger.warn(f'Found no lesson at {a["href"]}')
+
         except requests.exceptions.ConnectTimeout:
             logger.warning("Connection timed out.")
         finally:
