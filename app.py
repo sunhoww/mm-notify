@@ -5,6 +5,7 @@ import re
 from typing import cast, List
 import requests
 from bs4 import BeautifulSoup, Tag
+from requests.sessions import Session
 from websockets.sync.client import connect
 
 MM_BASE_URL = "https://www.school.mariamanipur.in"
@@ -26,63 +27,54 @@ logging.basicConfig(
 )
 
 
-def get_notice() -> List[str]:
-    with requests.Session() as s:
-        msgs = []
-        try:
-            headers = {"User-Agent": USER_AGENT}
-            s.post(
-                f"{MM_BASE_URL}/stulogin",
-                data={
-                    "stuenrno": MM_USERNAME,
-                    "stupass": MM_PASSWORD,
-                    "btn-submit": "true",
-                },
-                timeout=10,
-                headers=headers,
-            )
-            r = s.get(
-                f"{MM_BASE_URL}/myportal",
-                timeout=10,
-                headers=headers,
-            )
+def get_notices(s: Session) -> List[str]:
+    msgs = []
 
-            soup = BeautifulSoup(r.text, "html.parser")
-            if soup.find(string=lambda x: "No Notice Found!" in x):
-                logger.info("No Notice Found!")
+    r = s.get(
+        f"{MM_BASE_URL}/myportal",
+        timeout=10,
+        headers={"User-Agent": USER_AGENT},
+    )
 
-            for n in soup.find_all(class_="notice-board"):
-                msgs.append("\n".join([x for x in n.stripped_strings]))
+    soup = BeautifulSoup(r.text, "html.parser")
+    if soup.find(string=lambda x: "No Notice Found!" in x):
+        logger.info("No Notice Found!")
 
-            r = s.get(
-                f"{MM_BASE_URL}/myportal/lessons",
-                timeout=10,
-                headers=headers,
-            )
-            soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.find_all(href=re.compile("viewclass")):
-                lesson = []
-                l_r = s.get(a["href"], timeout=10, headers=headers)
-                l_soup = BeautifulSoup(l_r.text, "html.parser")
-                desc = cast(Tag, l_soup.find(class_="lesson-desc"))
-                desc = cast(
-                    Tag, desc.find_parent(class_="text-center")
-                ).stripped_strings
-                aside = cast(
-                    Tag, l_soup.find(class_="success-msg-box")
-                ).stripped_strings
+    for n in soup.find_all(class_="notice-board"):
+        msgs.append("\n".join([x for x in n.stripped_strings]))
 
-                lesson = list(desc) + list(aside)
-                if lesson:
-                    lesson.append(a["href"])
-                    msgs.append("\n".join(lesson))
-                else:
-                    logger.warn(f'Found no lesson at {a["href"]}')
+    return msgs
 
-        except requests.exceptions.ConnectTimeout:
-            logger.warning("Connection timed out.")
-        finally:
-            return msgs
+
+def get_lessons(s: Session) -> List[str]:
+    msgs = []
+    headers = {"User-Agent": USER_AGENT}
+
+    r = s.get(
+        f"{MM_BASE_URL}/myportal/lessons",
+        timeout=10,
+        headers=headers,
+    )
+    soup = BeautifulSoup(r.text, "html.parser")
+    if soup.find(string=lambda x: "No Lessons Found!" in x):
+        logger.info("No Lessons Found!")
+
+    for a in soup.find_all(href=re.compile("viewclass")):
+        lesson = []
+        l_r = s.get(a["href"], timeout=10, headers=headers)
+        l_soup = BeautifulSoup(l_r.text, "html.parser")
+        desc = cast(Tag, l_soup.find(class_="lesson-desc"))
+        desc = cast(Tag, desc.find_parent(class_="text-center")).stripped_strings
+        aside = cast(Tag, l_soup.find(class_="success-msg-box")).stripped_strings
+
+        lesson = list(desc) + list(aside)
+        if lesson:
+            lesson.append(a["href"])
+            msgs.append("\n".join(lesson))
+        else:
+            logger.warn(f'Found no lesson at {a["href"]}')
+
+    return msgs
 
 
 def update_ha(msgs: List[str]) -> None:
@@ -137,11 +129,28 @@ def update_ha(msgs: List[str]) -> None:
 
 
 def main():
-    msgs = get_notice()
-    if not msgs:
-        return
+    with requests.Session() as s:
+        try:
+            s.post(
+                f"{MM_BASE_URL}/stulogin",
+                data={
+                    "stuenrno": MM_USERNAME,
+                    "stupass": MM_PASSWORD,
+                    "btn-submit": "true",
+                },
+                timeout=10,
+                headers={"User-Agent": USER_AGENT},
+            )
+            notices = get_notices(s)
+            if notices:
+                update_ha(notices)
 
-    update_ha(msgs)
+            lessons = get_lessons(s)
+            if lessons:
+                update_ha(lessons)
+
+        except requests.exceptions.ConnectTimeout:
+            logger.error("Connection timed out.")
 
 
 if __name__ == "__main__":
