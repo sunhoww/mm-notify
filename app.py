@@ -134,6 +134,7 @@ def update_ha(msgs: List[str]) -> None:
 
 
 def main():
+    items = []
     with requests.Session() as s:
         try:
             s.post(
@@ -148,14 +149,17 @@ def main():
             )
             notices = get_notices(s)
             if notices:
-                update_ha(notices)
+                items.extend(notices)
 
             lessons = get_lessons(s)
             if lessons:
-                update_ha(lessons)
+                items.extend(lessons)
 
         except requests.exceptions.ConnectTimeout:
             logger.error("Connection timed out.")
+
+    if items:
+        update_ha(items)
 
 
 if __name__ == "__main__":
