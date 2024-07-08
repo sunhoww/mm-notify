@@ -28,8 +28,6 @@ logging.basicConfig(
 
 
 def get_notices(s: Session) -> List[str]:
-    msgs = []
-
     r = s.get(
         f"{MM_BASE_URL}/myportal",
         timeout=10,
@@ -40,14 +38,15 @@ def get_notices(s: Session) -> List[str]:
     if soup.find(string=lambda x: "No Notice Found!" in x):
         logger.info("No Notice Found!")
 
-    for n in soup.find_all(class_="notice-board"):
-        msgs.append("\n".join([x for x in n.stripped_strings]))
+    notices = soup.find_all(class_="notice-board")
+    if not notices:
+        return []
 
-    return msgs
+    logger.info(f"Notice found: {len(notices)}")
+    return ["\n".join([x for x in n.stripped_strings]) for n in notices]
 
 
 def get_lessons(s: Session) -> List[str]:
-    msgs = []
     headers = {"User-Agent": USER_AGENT}
 
     r = s.get(
@@ -59,7 +58,13 @@ def get_lessons(s: Session) -> List[str]:
     if soup.find(string=lambda x: "No Lessons Found!" in x):
         logger.info("No Lessons Found!")
 
-    for a in soup.find_all(href=re.compile("viewclass")):
+    lessons = soup.find_all(href=re.compile("viewclass"))
+    if not lessons:
+        return []
+
+    msgs = []
+    logger.info(f"Lesson found: {len(lessons)}")
+    for a in lessons:
         lesson = []
         l_r = s.get(a["href"], timeout=10, headers=headers)
         l_soup = BeautifulSoup(l_r.text, "html.parser")
