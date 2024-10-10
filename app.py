@@ -42,7 +42,7 @@ def get_notices(s: Session) -> List[str]:
     if not notices:
         return []
 
-    logger.info(f"Notice found: {len(notices)}")
+    logger.info(f"Notices found: {len(notices)}")
     return ["\n".join([x for x in n.stripped_strings]) for n in notices]
 
 
@@ -63,7 +63,7 @@ def get_lessons(s: Session) -> List[str]:
         return []
 
     msgs = []
-    logger.info(f"Lesson found: {len(lessons)}")
+    logger.info(f"Lessons found: {len(lessons)}")
     for a in lessons:
         lesson = []
         l_r = s.get(a["href"], timeout=10, headers=headers)
