@@ -2,9 +2,9 @@ import json
 import logging
 import os
 import re
-from typing import cast, List
+from typing import List
 import requests
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from requests.sessions import Session
 from websockets.sync.client import connect
 
@@ -68,9 +68,13 @@ def get_lessons(s: Session) -> List[str]:
         lesson = []
         l_r = s.get(a["href"], timeout=10, headers=headers)
         l_soup = BeautifulSoup(l_r.text, "html.parser")
-        desc = cast(Tag, l_soup.find(class_="lesson-desc"))
-        desc = cast(Tag, desc.find_parent(class_="text-center")).stripped_strings
-        aside = cast(Tag, l_soup.find(class_="success-msg-box")).stripped_strings
+        desc = l_soup.find(class_="lesson-desc") or soup.new_tag("")
+        desc = (
+            desc.find_parent(class_="text-center") or soup.new_tag("")
+        ).stripped_strings
+        aside = (
+            l_soup.find(class_="success-msg-box") or soup.new_tag("")
+        ).stripped_strings
 
         lesson = list(desc) + list(aside)
         if lesson:
