@@ -1,170 +1,122 @@
-import json
+import hashlib
 import logging
-import os
-import re
-from typing import List
 import requests
-from bs4 import BeautifulSoup
-from requests.sessions import Session
-from websockets.sync.client import connect
 
-MM_BASE_URL = "https://www.school.mariamanipur.in"
-MM_USERNAME = os.getenv("MM_USERNAME")
-MM_PASSWORD = os.getenv("MM_PASSWORD")
-
-HA_WS_ENDPOINT = os.getenv("HA_WS_ENDPOINT", "")
-HA_TODO_ID = os.getenv("HA_TODO_ID")
-HA_TOKEN = os.getenv("HA_TOKEN")
-
-USER_AGENT = (
-    "Mozilla/5.0 (compatible; mm_notify/0.3; +https://github.com/sunhoww/mm_notify)"
+from kanboard import (
+    create_task,
+    create_task_file,
+    get_project_id,
+    get_task_by_reference,
 )
+from lessons import (
+    get_lesson,
+    get_lesson_urls,
+    get_links,
+    get_subject,
+    make_category_getter,
+)
+from notices import get_notices
+from school import (
+    fetch_todays_lessons_page,
+    fetch_todays_notices_page,
+    get_attachment,
+    login,
+    fetch_lesson_page,
+)
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    format="%(levelname)s:%(message)s",
+    format="[%(levelname)s] %(message)s",
     level=logging.INFO,
 )
 
 
-def get_notices(s: Session) -> List[str]:
-    r = s.get(
-        f"{MM_BASE_URL}/myportal",
-        timeout=10,
-        headers={"User-Agent": USER_AGENT},
-    )
-
-    soup = BeautifulSoup(r.text, "html.parser")
+def _process_notices(s: requests.Session):
+    soup = fetch_todays_notices_page(s)
     if soup.find(string=lambda x: "No Notice Found!" in x):
         logger.info("No Notice Found!")
 
-    notices = soup.find_all(class_="notice-board")
+    notices = get_notices(soup)
     if not notices:
-        return []
+        return
 
     logger.info(f"Notices found: {len(notices)}")
-    return ["\n".join([x for x in n.stripped_strings]) for n in notices]
+
+    notice_count = 0
+    for notice in notices:
+        reference = hashlib.md5(
+            notice.get("description", "").encode(), usedforsecurity=False
+        ).hexdigest()
+        if get_task_by_reference(project_id=get_project_id(), reference=reference):
+            continue
+
+        notice["reference"] = reference
+        task_id = create_task(**notice)
+        if not task_id:
+            logger.warn(f"Failed to create task for notice: {reference}")
+            continue
+        notice_count += 1
+
+    logger.info(f"Notices created: {notice_count}")
 
 
-def get_lessons(s: Session) -> List[str]:
-    headers = {"User-Agent": USER_AGENT}
-
-    r = s.get(
-        f"{MM_BASE_URL}/myportal/lessons",
-        timeout=10,
-        headers=headers,
-    )
-    soup = BeautifulSoup(r.text, "html.parser")
+def _process_lessons(s: requests.Session):
+    soup = fetch_todays_lessons_page(s)
     if soup.find(string=lambda x: "No Lessons Found!" in x):
         logger.info("No Lessons Found!")
 
-    lessons = soup.find_all(href=re.compile("viewclass"))
-    if not lessons:
-        return []
+    urls = get_lesson_urls(soup)
+    if not urls:
+        return
 
-    msgs = []
-    logger.info(f"Lessons found: {len(lessons)}")
-    for a in lessons:
-        lesson = []
-        l_r = s.get(a["href"], timeout=10, headers=headers)
-        l_soup = BeautifulSoup(l_r.text, "html.parser")
-        desc = l_soup.find(class_="lesson-desc") or soup.new_tag("")
-        desc = (
-            desc.find_parent(class_="text-center") or soup.new_tag("")
-        ).stripped_strings
-        aside = (
-            l_soup.find(class_="success-msg-box") or soup.new_tag("")
-        ).stripped_strings
+    logger.info(f"Lessons found: {len(urls)}")
+    get_category = make_category_getter()
 
-        lesson = list(desc) + list(aside)
-        if lesson:
-            lesson.append(a["href"])
-            msgs.append("\n".join(lesson))
-        else:
-            logger.warn(f'Found no lesson at {a["href"]}')
+    lesson_count = file_count = 0
+    for url in urls:
+        if get_task_by_reference(project_id=get_project_id(), reference=url):
+            continue
 
-    return msgs
+        soup = fetch_lesson_page(s, url)
+        lesson = get_lesson(soup)
+        lesson["reference"] = url
+        if subject := get_subject(soup):
+            if category_id := get_category(subject):
+                lesson["category_id"] = category_id
+        task_id = create_task(**lesson)
+        if not task_id:
+            logger.warn(f"Failed to create task for lesson: {url}")
+            continue
+        lesson_count += 1
 
+        links = get_links(soup)
+        logger.info(f"Attachments found for task #{task_id}: {len(links)}")
+        for href, filename in links:
+            blob = get_attachment(s, href)
+            task_file_id = create_task_file(
+                lesson["project_id"], task_id, filename, blob
+            )
+            if not task_file_id:
+                logger.warn(
+                    f"Failed to create attachment for task #{task_id}: {filename}"
+                )
+                continue
+            file_count += 1
 
-def update_ha(msgs: List[str]) -> None:
-    with connect(HA_WS_ENDPOINT) as ws:
-        id = 1
-        _req = {
-            "type": "auth",
-            "access_token": HA_TOKEN,
-        }
-        ws.send(json.dumps(_req))
-        ws.recv()
-        ws.recv()
-        _req = {
-            "id": id,
-            "return_response": True,
-            "type": "call_service",
-            "domain": "todo",
-            "service": "get_items",
-            "target": {"entity_id": HA_TODO_ID},
-        }
-        ws.send(json.dumps(_req))
-        h_descriptions = [
-            hash(x.get("description"))
-            for x in json.loads(ws.recv())
-            .get("result", {})
-            .get("response", {})
-            .get(HA_TODO_ID, {})
-            .get("items", [])
-        ]
-
-        for msg in msgs:
-            item = msg.split("\n")[0]
-            description = "\n".join(msg.split("\n")[1:])
-            if hash(description) not in h_descriptions:
-                id += 1
-                _req = {
-                    "id": id,
-                    "type": "call_service",
-                    "domain": "todo",
-                    "service": "add_item",
-                    "target": {"entity_id": HA_TODO_ID},
-                    "service_data": {"item": item, "description": description},
-                }
-                ws.send(json.dumps(_req))
-
-                if json.loads(ws.recv()).get("success", False):
-                    logger.info("Added item.")
-                else:
-                    logger.warn("Failed to add item.")
-            else:
-                logger.info("Item already exists. Not adding.")
+    logger.info(f"Lessons created: {lesson_count}")
+    logger.info(f"Attachments created: {file_count}")
 
 
-def main():
-    items = []
+def _main():
     with requests.Session() as s:
         try:
-            s.post(
-                f"{MM_BASE_URL}/stulogin",
-                data={
-                    "stuenrno": MM_USERNAME,
-                    "stupass": MM_PASSWORD,
-                    "btn-submit": "true",
-                },
-                timeout=10,
-                headers={"User-Agent": USER_AGENT},
-            )
-            notices = get_notices(s)
-            if notices:
-                items.extend(notices)
-
-            lessons = get_lessons(s)
-            if lessons:
-                items.extend(lessons)
-
+            login(s)
+            _process_notices(s)
+            _process_lessons(s)
         except requests.exceptions.ConnectTimeout:
             logger.error("Connection timed out.")
 
-    if items:
-        update_ha(items)
-
 
 if __name__ == "__main__":
-    main()
+    _main()
